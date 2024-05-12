@@ -8,7 +8,7 @@ impl<'f> Add for Function<'f> {
     fn add(self, rhs: Function<'f>) -> Self::Output {
         let lhs: Function = self.into();
         let rhs: Function = rhs.into();
-        println!("lhs: {:?}, rhs: {:?}", lhs, rhs);
+        // println!("lhs: {:?}, rhs: {:?}", lhs, rhs);
         match (&lhs, &rhs) {
             (&Function::Constant(lhs), &Function::Constant(rhs)) => Function::Constant(lhs + rhs),
             (&Function::Add{vec: ref lhs}, &Function::Add{vec: ref rhs}) => {
