@@ -441,6 +441,67 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
                 }
             ))
         }
+        Div {
+            num,
+            den
+        } => {
+            let num_ptr = simplify_hash2(num, hmap);
+            let den_ptr = simplify_hash2(den, hmap);
+            let num_func = unsafe { &*num_ptr };
+            let den_func = unsafe { &*den_ptr };
+
+            let num_type = match num_func {
+                Constant(_) => FunctionType::Constant,
+                S { f, m, p } => {
+                    let child_str = format!("{:?}", f);
+                    FunctionType::SAdd(child_str, Decimal::from_f64_retain(*p).unwrap())
+                }
+                _ => FunctionType::Other
+            };
+            let den_type = match den_func {
+                Constant(_) => FunctionType::Constant,
+                S { f, m, p } => {
+                    let child_str = format!("{:?}", f);
+                    FunctionType::SAdd(child_str, Decimal::from_f64_retain(*p).unwrap())
+                }
+                _ => FunctionType::Other
+            };
+
+            if num_type == den_type {
+                match (num_func, den_func) {
+                    (Constant(num_val), Constant(den_val)) => {
+                        Arc::into_raw(Arc::new(Constant(num_val / den_val)))
+                    }
+                    (S { f: num_s_func, m: num_s_mul, p: num_s_pow }, S { f: den_s_func, m: den_s_mul, p: den_s_pow }) => {
+                        Arc::into_raw(Arc::new(
+                            S {
+                                f: num_s_func.clone(),
+                                m: num_s_mul / den_s_mul,
+                                p: num_s_pow - den_s_pow
+                            }
+                        ))
+                    }
+                    _ => todo!()
+                }
+            } else {
+                Arc::into_raw(Arc::new( S {
+                    f: Arc::new(Div {
+                        num: Arc::new(S {
+                            f: Arc::new(num_func.clone()),
+                            m: 1.0,
+                            p: 1.0
+                        }),
+                        den: Arc::new(S {
+                            f: Arc::new(den_func.clone()),
+                            m: 1.0,
+                            p: 1.0
+                        })
+                    }),
+                    m: 1.0,
+                    p: 1.0
+                }))
+            }
+        }
         _ => todo!()
     }
 
@@ -487,7 +548,8 @@ mod tests {
         let y = Variable("y");
         // let z = (x.clone() - y.clone()) * x.clone();
         // let z = x.clone() * y.clone() + x.clone() * y.clone();
-        let z = (x.clone() - y.clone()) * (x.clone() + y.clone() + x.clone()) * (x.clone() - y.clone());
+        // let z = (x.clone() - y.clone()) * (x.clone() + y.clone() + x.clone()) * (x.clone() - y.clone());
+        let z = Constant(1.0) / x.clone() + Constant(1.0) / x.clone();
         let z_simple = simplify_h(z.clone());
         println!("Input: {:?}", z);
         println!("Simpl: {:?}", z_simple);

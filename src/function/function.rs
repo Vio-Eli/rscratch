@@ -85,6 +85,16 @@ impl<'f> PartialEq for Function<'f> {
                     rhs: rhs2,
                 },
             ) => lhs1 == lhs2 && rhs1 == rhs2,
+            (
+                Function::Div {
+                    num: num1,
+                    den: den1,
+                },
+                Function::Div {
+                    num: num2,
+                    den: den2,
+                },
+            ) => num1 == num2 && den1 == den2,
             _ => false
         }
     }
