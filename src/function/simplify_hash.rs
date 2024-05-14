@@ -3,7 +3,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use rust_decimal::Decimal;
 use crate::function::function::Function;
-use crate::function::function::Function::{Add, Constant, Mul, S, Variable};
+use crate::function::function::Function::{Add, Sub, Constant, Mul, Div, S, Variable};
 use rust_decimal_macros::dec;
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
@@ -323,6 +323,61 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
                 }
             ))
         }
+        Sub { lhs, rhs } => {
+            let lhs_ptr = simplify_hash2(lhs, hmap);
+            let rhs_ptr = simplify_hash2(rhs, hmap);
+            let lhs_func = unsafe { &*lhs_ptr };
+            let rhs_func = unsafe { &*rhs_ptr };
+            fn get_func_type(func: &Function) -> FunctionType {
+                match func {
+                    Constant(_) => FunctionType::Constant,
+                    S { f, m, p } => {
+                        let child_str = format!("{:?}", f);
+                        FunctionType::SAdd(child_str, Decimal::from_f64_retain(*p).unwrap())
+                    }
+                    _ => FunctionType::Other
+                }
+            }
+
+            let lhs_type = get_func_type(lhs_func);
+            let rhs_type = get_func_type(rhs_func);
+
+            if lhs_type == rhs_type {
+                match (lhs_func, rhs_func) {
+                    (Constant(lhs_val), Constant(rhs_val)) => {
+                        Arc::into_raw(Arc::new(Constant(lhs_val - rhs_val)))
+                    }
+                    (S { f: lhs_s_func, m: lhs_s_mul, p: lhs_s_pow }, S { f: rhs_s_func, m: rhs_s_mul, p: rhs_s_pow }) => {
+                        Arc::into_raw(Arc::new(
+                            S {
+                                f: lhs_s_func.clone(),
+                                m: lhs_s_mul - rhs_s_mul,
+                                p: *lhs_s_pow
+                            }
+                        ))
+                    }
+                    _ => todo!()
+                }
+            } else {
+                println!("lhs: {:?}, rhs: {:?}", lhs_func, rhs_func);
+                Arc::into_raw(Arc::new( S {
+                    f: Arc::new(Sub {
+                        lhs: Arc::new(S {
+                            f: Arc::new(lhs_func.clone()),
+                            m: 1.0,
+                            p: 1.0
+                        }),
+                        rhs: Arc::new(S {
+                            f: Arc::new(rhs_func.clone()),
+                            m: 1.0,
+                            p: 1.0
+                        })
+                    }),
+                    m: 1.0,
+                    p: 1.0
+                }))
+            }
+        }
         Mul { vec } => {
             let mut type_vec = vec![];
             vec.iter().for_each(|child| {
@@ -412,7 +467,7 @@ pub fn stringify_hash(map: &HashMap<*const Function, Vec<*const Function>>) -> S
 pub fn stringify_hash2(map: &HashMap<(*const Function, FunctionType), Vec<*const Function>>) -> String {
     let mut s = String::new();
     for ((key, name), value) in map {
-        s.push_str(&format!("{:?}, {:?} ({:?}) -> [", key, name, unsafe { &(**key) }));
+        s.push_str(&format!("{:?} ({:?}), {:?} -> [", key, unsafe { &(**key) }, name));
         for v in value {
             s.push_str(&format!("{:?}: {:?}, ", v, unsafe { &(**v) }));
         }
@@ -430,9 +485,9 @@ mod tests {
     fn test_simplify_hash() {
         let x = Variable("x");
         let y = Variable("y");
-        // let z = (x.clone() + y.clone()) * x.clone();
+        // let z = (x.clone() - y.clone()) * x.clone();
         // let z = x.clone() * y.clone() + x.clone() * y.clone();
-        let z = x.clone() * Constant(2.0) + x.clone() + x.clone() * Constant(2.0);
+        let z = (x.clone() - y.clone()) * (x.clone() + y.clone() + x.clone()) * (x.clone() - y.clone());
         let z_simple = simplify_h(z.clone());
         println!("Input: {:?}", z);
         println!("Simpl: {:?}", z_simple);

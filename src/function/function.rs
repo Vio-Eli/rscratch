@@ -75,6 +75,16 @@ impl<'f> PartialEq for Function<'f> {
                 rhs_sorted.sort();
                 lhs.len() == rhs.len() && lhs_sorted.iter().zip(rhs_sorted.iter()).all(|(l, r)| l == r)
             },
+            (
+                Function::Sub {
+                    lhs: lhs1,
+                    rhs: rhs1,
+                },
+                Function::Sub {
+                    lhs: lhs2,
+                    rhs: rhs2,
+                },
+            ) => lhs1 == lhs2 && rhs1 == rhs2,
             _ => false
         }
     }
