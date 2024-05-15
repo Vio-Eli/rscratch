@@ -10,8 +10,8 @@ use rust_decimal_macros::dec;
 enum FunctionType {
     Parent,
     Constant,
-    SAdd(String, Decimal),
-    SMul(String),
+    SAdd(String, Decimal), // when we simplify children in ADD, we care about the power
+    SMul(String), // when we simplify children in MUL, we don't care about the power
     Add,
     Mul,
     Other
@@ -248,9 +248,11 @@ fn simplify_hash<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<*co
 //     }
 // }
 fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*const Function<'f>, FunctionType), Vec<*const Function<'f>>>) -> *const Function<'f> {
+    // get a raw pointer to the parent function
     let parent_ptr = Arc::into_raw(function.clone());
     match &**function {
         Variable(name) => {
+            // convert
             Arc::into_raw(Arc::new(
                 S {
                     f: Arc::new(Variable(name)),
@@ -261,47 +263,64 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
         }
         Constant(_) | S {..} => parent_ptr,
         Add { vec } => {
+            // type vec collection of all the existing function types existing in the parent
+            // to keep track of the types we have encountered
             let mut type_vec = vec![];
+            // visit each child node
             vec.iter().for_each(|child| {
+                // simplify the function then return a raw pointer to it
                 let child_ptr = simplify_hash2(child, hmap);
+                // own the child
                 let child_func = unsafe { &*child_ptr };
+                // categorize the sub funciton type
                 let child_func_type = match &child_func {
                     Constant(_) => FunctionType::Constant,
                     S { f, m, p } => {
-                        let child_str = format!("{:?}", f);
+                        // recurses the tree
+                        // this is bad,
+                        // because converting to strings is a bad idea
+                        // this is just for the comparison
+                        let child_str = format!("{:?}", f); // I don't like this
+                        // the reason for this is... S { f: Add {..}, m: 1.0, p: 1.0 }
                         FunctionType::SAdd(child_str, Decimal::from_f64_retain(*p).unwrap())
                     }
                     _ => FunctionType::Other
                 };
+                // if this exists in the "soup" hashmap
                 if let Some(child_vec) = hmap.get_mut(&(parent_ptr, child_func_type.clone())) {
-                    let mut existing_child_ptr = child_vec[0];
+                    // grab the existing pointer
+                    // look up the existing function and prep to mutate it in place
+                    // the mutation will be based on the current child function and the existing function
+                    let mut existing_child_ptr = child_vec[0]; // only one item in this vector. something went wrong if not true
                     let existing_child_func = unsafe { &*existing_child_ptr };
                     match existing_child_func {
                         Constant(val) => {
                             match child_func {
+                                // if its constant then just add both
                                 Constant(other_val) => {
                                     let new_func = Constant(val + other_val);
                                     child_vec[0] = Arc::into_raw(Arc::new(new_func));
                                 }
-                                _ => todo!()
+                                _ => unreachable!()
                             }
                         }
                         S { f: existing_f, m: existing_m, p: existing_p } => {
                             match child_func {
                                 S { f: other_f, m: other_m, p: other_p } => {
-                                    if existing_f == other_f && existing_p == other_p {
-                                        let new_func = S {
-                                            f: other_f.clone(),
-                                            m: existing_m + other_m,
-                                            p: *other_p
-                                        };
-                                        child_vec[0] = Arc::into_raw(Arc::new(new_func));
-                                    }
+                                    // because the types are the same we know the power and functions are the same
+                                    // if existing_f == other_f && existing_p == other_p {
+                                    let new_func = S {
+                                        f: other_f.clone(),
+                                        m: existing_m + other_m,
+                                        p: *other_p
+                                    };
+                                    child_vec[0] = Arc::into_raw(Arc::new(new_func));
+                                    // }
                                 }
-                                _ => todo!()
+                                _ => unreachable!()
                             }
                         }
-                        _ => todo!()
+                        _ => unreachable!()
                     }
                 } else {
                     type_vec.push(child_func_type.clone());
@@ -537,6 +556,29 @@ pub fn stringify_hash2(map: &HashMap<(*const Function, FunctionType), Vec<*const
     s
 }
 
+// function that takes in two Single Function creates some unique keys
+// that represents the function.
+// hash
+
+
+mod exprements {
+    use std::any::TypeId;
+    use std::hash::DefaultHasher;
+    use std::intrinsics::type_id;
+    use std::mem::discriminant;
+    use super::*;
+
+    // Option<&T>
+    // &Option<T>
+    fn freeze(function: &Arc<Function>) {
+        let hasher = DefaultHasher::new();
+
+        let f = function.as_ref();
+        discriminant(f);
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,7 +591,7 @@ mod tests {
         // let z = (x.clone() - y.clone()) * x.clone();
         // let z = x.clone() * y.clone() + x.clone() * y.clone();
         // let z = (x.clone() - y.clone()) * (x.clone() + y.clone() + x.clone()) * (x.clone() - y.clone());
-        let z = Constant(1.0) / x.clone() + Constant(1.0) / x.clone();
+        let z = (x.clone() + y.clone()) - (x.clone() - y.clone());
         let z_simple = simplify_h(z.clone());
         println!("Input: {:?}", z);
         println!("Simpl: {:?}", z_simple);
