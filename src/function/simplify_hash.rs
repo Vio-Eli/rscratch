@@ -4,14 +4,15 @@ use std::sync::Arc;
 use rust_decimal::Decimal;
 use crate::function::function::Function;
 use crate::function::function::Function::{Add, Sub, Constant, Mul, Div, S, Variable};
+use crate::function::freeze::freeze;
 use rust_decimal_macros::dec;
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 enum FunctionType {
     Parent,
     Constant,
-    SAdd(String, Decimal), // when we simplify children in ADD, we care about the power
-    SMul(String), // when we simplify children in MUL, we don't care about the power
+    SAdd(u64, Decimal), // when we simplify children in ADD, we care about the power
+    SMul(u64), // when we simplify children in MUL, we don't care about the power
     Add,
     Mul,
     Other
@@ -276,13 +277,7 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
                 let child_func_type = match &child_func {
                     Constant(_) => FunctionType::Constant,
                     S { f, m, p } => {
-                        // recurses the tree
-                        // this is bad,
-                        // because converting to strings is a bad idea
-                        // this is just for the comparison
-                        let child_str = format!("{:?}", f); // I don't like this
-                        // the reason for this is... S { f: Add {..}, m: 1.0, p: 1.0 }
-                        FunctionType::SAdd(child_str, Decimal::from_f64_retain(*p).unwrap())
+                        FunctionType::SAdd(freeze(f), Decimal::from_f64_retain(*p).unwrap())
                     }
                     _ => FunctionType::Other
                 };
@@ -351,8 +346,12 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
                 match func {
                     Constant(_) => FunctionType::Constant,
                     S { f, m, p } => {
-                        let child_str = format!("{:?}", f);
-                        FunctionType::SAdd(child_str, Decimal::from_f64_retain(*p).unwrap())
+                        match &**f {
+                            // Add {..} => FunctionType::SAdd("Add".to_string(), Decimal::from_f64_retain(*p).unwrap()),
+                            _ => {
+                                FunctionType::SAdd(freeze(f), Decimal::from_f64_retain(*p).unwrap())
+                            }
+                        }
                     }
                     _ => FunctionType::Other
                 }
@@ -360,13 +359,30 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
 
             let lhs_type = get_func_type(lhs_func);
             let rhs_type = get_func_type(rhs_func);
+            println!("Sub Types: {:?}, {:?}", lhs_type, rhs_type);
 
             if lhs_type == rhs_type {
-                match (lhs_func, rhs_func) {
+                match (&lhs_func, &rhs_func) {
                     (Constant(lhs_val), Constant(rhs_val)) => {
                         Arc::into_raw(Arc::new(Constant(lhs_val - rhs_val)))
                     }
                     (S { f: lhs_s_func, m: lhs_s_mul, p: lhs_s_pow }, S { f: rhs_s_func, m: rhs_s_mul, p: rhs_s_pow }) => {
+                        // match &(lhs_s_func, rhs_s_func) {
+                        //     (Add { vec: l_vec }, Add { vec: r_vec }) => {
+                        //         for l_f  in l_vec {
+                        //             hmap.insert()
+                        //         }
+                        //     }
+                        //     _ => {
+                        //         Arc::into_raw(Arc::new(
+                        //             S {
+                        //                 f: lhs_s_func.clone(),
+                        //                 m: lhs_s_mul - rhs_s_mul,
+                        //                 p: *lhs_s_pow
+                        //             }
+                        //         ))
+                        //     }
+                        // }
                         Arc::into_raw(Arc::new(
                             S {
                                 f: lhs_s_func.clone(),
@@ -405,8 +421,7 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
                 let child_func_type = match &child_func {
                     Constant(_) => FunctionType::Constant,
                     S { f, m, p } => {
-                        let child_str = format!("{:?}", f);
-                        FunctionType::SMul(child_str)
+                        FunctionType::SMul(freeze(f))
                     }
                     _ => FunctionType::Other
                 };
@@ -472,16 +487,14 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
             let num_type = match num_func {
                 Constant(_) => FunctionType::Constant,
                 S { f, m, p } => {
-                    let child_str = format!("{:?}", f);
-                    FunctionType::SAdd(child_str, Decimal::from_f64_retain(*p).unwrap())
+                    FunctionType::SAdd(freeze(f), Decimal::from_f64_retain(*p).unwrap())
                 }
                 _ => FunctionType::Other
             };
             let den_type = match den_func {
                 Constant(_) => FunctionType::Constant,
                 S { f, m, p } => {
-                    let child_str = format!("{:?}", f);
-                    FunctionType::SAdd(child_str, Decimal::from_f64_retain(*p).unwrap())
+                    FunctionType::SAdd(freeze(f), Decimal::from_f64_retain(*p).unwrap())
                 }
                 _ => FunctionType::Other
             };
@@ -556,28 +569,6 @@ pub fn stringify_hash2(map: &HashMap<(*const Function, FunctionType), Vec<*const
     s
 }
 
-// function that takes in two Single Function creates some unique keys
-// that represents the function.
-// hash
-
-
-mod exprements {
-    use std::any::TypeId;
-    use std::hash::DefaultHasher;
-    use std::intrinsics::type_id;
-    use std::mem::discriminant;
-    use super::*;
-
-    // Option<&T>
-    // &Option<T>
-    fn freeze(function: &Arc<Function>) {
-        let hasher = DefaultHasher::new();
-
-        let f = function.as_ref();
-        discriminant(f);
-    }
-}
-
 
 #[cfg(test)]
 mod tests {
@@ -591,7 +582,7 @@ mod tests {
         // let z = (x.clone() - y.clone()) * x.clone();
         // let z = x.clone() * y.clone() + x.clone() * y.clone();
         // let z = (x.clone() - y.clone()) * (x.clone() + y.clone() + x.clone()) * (x.clone() - y.clone());
-        let z = (x.clone() + y.clone()) - (x.clone() - y.clone());
+        let z = (x.clone() - y.clone()) + (x.clone() - y.clone());
         let z_simple = simplify_h(z.clone());
         println!("Input: {:?}", z);
         println!("Simpl: {:?}", z_simple);
