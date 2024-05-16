@@ -175,7 +175,7 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
                     }
                     (S { f: lhs_s_func, m: lhs_s_mul, p: lhs_s_pow }, S { f: rhs_s_func, m: rhs_s_mul, p: rhs_s_pow }) => {
                         match (&**lhs_s_func, &**rhs_s_func) {
-                            (Add { vec: lhs_vec }, Add { vec: rhs_vec }) => {
+                            (Add { vec: lhs_vec }, Add { vec: rhs_vec }) if lhs_s_func != rhs_s_func => {
                                 let mut type_vec = vec![];
                                 lhs_vec.iter().for_each(|child| {
                                     let child_ptr = Arc::into_raw(child.clone());
@@ -247,15 +247,8 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
                                 ))
                             }
                         }
-                        // Arc::into_raw(Arc::new(
-                        //     S {
-                        //         f: lhs_s_func.clone(),
-                        //         m: lhs_s_mul - rhs_s_mul,
-                        //         p: *lhs_s_pow
-                        //     }
-                        // ))
                     }
-                    _ => todo!()
+                    _ => unreachable!()
                 }
             } else {
                 println!("lhs: {:?}, rhs: {:?}", lhs_func, rhs_func);
