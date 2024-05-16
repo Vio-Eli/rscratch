@@ -154,7 +154,7 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
                     Constant(_) => FunctionType::Constant,
                     S { f, m, p } => {
                         match &**f {
-                            // Add {..} => FunctionType::SAdd("Add".to_string(), Decimal::from_f64_retain(*p).unwrap()),
+                            Add {..} => FunctionType::SAdd(freeze(&Add { vec: vec![] }), Decimal::from_f64_retain(*p).unwrap()),
                             _ => {
                                 FunctionType::SAdd(freeze(f), Decimal::from_f64_retain(*p).unwrap())
                             }
@@ -174,29 +174,86 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
                         Arc::into_raw(Arc::new(Constant(lhs_val - rhs_val)))
                     }
                     (S { f: lhs_s_func, m: lhs_s_mul, p: lhs_s_pow }, S { f: rhs_s_func, m: rhs_s_mul, p: rhs_s_pow }) => {
-                        // match &(lhs_s_func, rhs_s_func) {
-                        //     (Add { vec: l_vec }, Add { vec: r_vec }) => {
-                        //         for l_f  in l_vec {
-                        //             hmap.insert()
-                        //         }
-                        //     }
-                        //     _ => {
-                        //         Arc::into_raw(Arc::new(
-                        //             S {
-                        //                 f: lhs_s_func.clone(),
-                        //                 m: lhs_s_mul - rhs_s_mul,
-                        //                 p: *lhs_s_pow
-                        //             }
-                        //         ))
-                        //     }
-                        // }
-                        Arc::into_raw(Arc::new(
-                            S {
-                                f: lhs_s_func.clone(),
-                                m: lhs_s_mul - rhs_s_mul,
-                                p: *lhs_s_pow
+                        match (&**lhs_s_func, &**rhs_s_func) {
+                            (Add { vec: lhs_vec }, Add { vec: rhs_vec }) => {
+                                let mut type_vec = vec![];
+                                lhs_vec.iter().for_each(|child| {
+                                    let child_ptr = Arc::into_raw(child.clone());
+                                    let child_type = get_func_type(&*child);
+                                    type_vec.push(child_type.clone());
+                                    hmap.insert((parent_ptr, child_type), vec![child_ptr]);
+                                });
+
+                                rhs_vec.iter().for_each(|child| {
+                                    let child_type = get_func_type(&*child);
+                                    if let Some(child_vec) = hmap.get_mut(&(parent_ptr, child_type.clone())) {
+                                        let mut existing_child_ptr = child_vec[0];
+                                        let existing_child_func = unsafe { &*existing_child_ptr };
+                                        match existing_child_func {
+                                            Constant(val) => {
+                                                match &**child {
+                                                    Constant(other_val) => {
+                                                        let new_func = Constant(val - other_val);
+                                                        child_vec[0] = Arc::into_raw(Arc::new(new_func));
+                                                    }
+                                                    _ => unreachable!()
+                                                }
+                                            }
+                                            S { f: existing_f, m: existing_m, p: existing_p } => {
+                                                match &**child {
+                                                    S { f: other_f, m: other_m, p: other_p } => {
+                                                        if existing_f == other_f && existing_p == other_p {
+                                                            let new_func = S {
+                                                                f: other_f.clone(),
+                                                                m: existing_m - other_m,
+                                                                p: *existing_p
+                                                            };
+                                                            child_vec[0] = Arc::into_raw(Arc::new(new_func));
+                                                        }
+                                                    }
+                                                    _ => unreachable!()
+                                                }
+                                            }
+                                            _ => unreachable!()
+                                        }
+                                    } else {
+                                        let child_ptr = Arc::into_raw(child.clone());
+                                        type_vec.push(child_type.clone());
+                                        hmap.insert((parent_ptr, child_type), vec![child_ptr]);
+                                    }
+                                });
+
+                                let new_vec = type_vec.iter().map(|t| {
+                                    let simplified_ptr = hmap.get(&(parent_ptr, t.clone())).unwrap()[0];
+                                    let func = unsafe { &*simplified_ptr };
+                                    Arc::new(func.clone())
+                                }).collect();
+
+                                Arc::into_raw(Arc::new(
+                                    S {
+                                        f: Arc::new(Add { vec: new_vec }),
+                                        m: 1.0,
+                                        p: 1.0
+                                    }
+                                ))
                             }
-                        ))
+                            _ => {
+                                Arc::into_raw(Arc::new(
+                                    S {
+                                        f: lhs_s_func.clone(),
+                                        m: lhs_s_mul - rhs_s_mul,
+                                        p: *lhs_s_pow
+                                    }
+                                ))
+                            }
+                        }
+                        // Arc::into_raw(Arc::new(
+                        //     S {
+                        //         f: lhs_s_func.clone(),
+                        //         m: lhs_s_mul - rhs_s_mul,
+                        //         p: *lhs_s_pow
+                        //     }
+                        // ))
                     }
                     _ => todo!()
                 }
@@ -389,7 +446,7 @@ mod tests {
         // let z = (x.clone() - y.clone()) * x.clone();
         // let z = x.clone() * y.clone() + x.clone() * y.clone();
         // let z = (x.clone() - y.clone()) * (x.clone() + y.clone() + x.clone()) * (x.clone() - y.clone());
-        let z = (x.clone() - y.clone()) + (x.clone() - y.clone());
+        let z = (x.clone() + y.clone()) - (x.clone() + y.clone());
         let z_simple = simplify_h(z.clone());
         println!("Input: {:?}", z);
         println!("Simpl: {:?}", z_simple);
