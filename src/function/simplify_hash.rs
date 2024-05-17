@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::ops::Deref;
+use std::ops::{Deref, Neg};
 use std::sync::Arc;
 use rust_decimal::Decimal;
 use crate::function::function::Function;
@@ -111,12 +111,23 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
                                 S { f: other_f, m: other_m, p: other_p } => {
                                     // because the types are the same we know the power and functions are the same
                                     // if existing_f == other_f && existing_p == other_p {
-                                    let new_func = S {
-                                        f: other_f.clone(),
-                                        m: existing_m + other_m,
-                                        p: *other_p
-                                    };
-                                    child_vec[0] = Arc::into_raw(Arc::new(new_func));
+                                    if existing_m == &-other_m.clone() {
+                                        let new_func = Constant(0.0);
+                                        child_vec[0] = Arc::into_raw(Arc::new(new_func));
+                                    } else {
+                                        let new_func = S {
+                                            f: other_f.clone(),
+                                            m: existing_m + other_m,
+                                            p: *other_p
+                                        };
+                                        child_vec[0] = Arc::into_raw(Arc::new(new_func));
+                                    }
+                                    // let new_func = S {
+                                    //     f: other_f.clone(),
+                                    //     m: existing_m + other_m,
+                                    //     p: *other_p
+                                    // };
+                                    // child_vec[0] = Arc::into_raw(Arc::new(new_func));
                                     // }
                                 }
                                 _ => unreachable!()
@@ -202,14 +213,25 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
                                             S { f: existing_f, m: existing_m, p: existing_p } => {
                                                 match &**child {
                                                     S { f: other_f, m: other_m, p: other_p } => {
-                                                        if existing_f == other_f && existing_p == other_p {
+                                                        // if existing_f == other_f && existing_p == other_p {
+                                                        if existing_m == other_m {
+                                                            let new_func = Constant(0.0);
+                                                            child_vec[0] = Arc::into_raw(Arc::new(new_func));
+                                                        } else {
                                                             let new_func = S {
                                                                 f: other_f.clone(),
                                                                 m: existing_m - other_m,
-                                                                p: *existing_p
+                                                                p: *other_p
                                                             };
                                                             child_vec[0] = Arc::into_raw(Arc::new(new_func));
                                                         }
+                                                        // let new_func = S {
+                                                        //     f: other_f.clone(),
+                                                        //     m: existing_m - other_m,
+                                                        //     p: *existing_p
+                                                        // };
+                                                        // child_vec[0] = Arc::into_raw(Arc::new(new_func));
+                                                        // }
                                                     }
                                                     _ => unreachable!()
                                                 }
@@ -238,13 +260,20 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
                                 ))
                             }
                             _ => {
-                                Arc::into_raw(Arc::new(
-                                    S {
-                                        f: lhs_s_func.clone(),
-                                        m: lhs_s_mul - rhs_s_mul,
-                                        p: *lhs_s_pow
-                                    }
-                                ))
+
+                                if lhs_s_mul == rhs_s_mul {
+                                    Arc::into_raw(Arc::new(
+                                        Constant(0.0)
+                                    ))
+                                } else {
+                                    Arc::into_raw(Arc::new(
+                                        S {
+                                            f: lhs_s_func.clone(),
+                                            m: lhs_s_mul - rhs_s_mul,
+                                            p: *lhs_s_pow
+                                        }
+                                    ))
+                                }
                             }
                         }
                     }
@@ -439,7 +468,7 @@ mod tests {
         // let z = (x.clone() - y.clone()) * x.clone();
         // let z = x.clone() * y.clone() + x.clone() * y.clone();
         // let z = (x.clone() - y.clone()) * (x.clone() + y.clone() + x.clone()) * (x.clone() - y.clone());
-        let z = (x.clone() + y.clone()) - (x.clone() + y.clone());
+        let z = (x.clone() + y.clone()) - (x.clone() + y.clone()) + x.clone();
         let z_simple = simplify_h(z.clone());
         println!("Input: {:?}", z);
         println!("Simpl: {:?}", z_simple);
