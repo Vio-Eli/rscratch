@@ -20,7 +20,7 @@ enum FunctionType {
 
 pub fn simplify_h(function: Function) -> Function {
     let mut hmap = HashMap::new();
-    let fun = simplify_hash2(&Arc::new(function), &mut hmap); // , counts: &'m mut HashMap<&'m str, f64>
+    let fun = simplify_hash(&Arc::new(function), &mut hmap); // , counts: &'m mut HashMap<&'m str, f64>
     // simplify_hash2(&Arc::new(function), &mut hmap);
 
     println!("{:?}", hmap);
@@ -30,7 +30,7 @@ pub fn simplify_h(function: Function) -> Function {
     // Constant(0.0)
 }
 
-fn simplify_hash<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<*const Function<'f>, Vec<*const Function<'f>>>) {
+fn simplify_hash_old<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<*const Function<'f>, Vec<*const Function<'f>>>) {
     let ptr = Arc::into_raw(function.clone());
     if !hmap.contains_key(&ptr) {
         let children = match &**function {
@@ -47,7 +47,7 @@ fn simplify_hash<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<*co
         match &**function {
             Add { vec } | Mul { vec } => {
                 for child in vec {
-                    simplify_hash(child, hmap);
+                    simplify_hash_old(child, hmap);
                 }
             },
             _ => {}
@@ -55,7 +55,7 @@ fn simplify_hash<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<*co
     }
 }
 
-fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*const Function<'f>, FunctionType), Vec<*const Function<'f>>>) -> *const Function<'f> {
+fn simplify_hash<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*const Function<'f>, FunctionType), Vec<*const Function<'f>>>) -> *const Function<'f> {
     // get a raw pointer to the parent function
     let parent_ptr = Arc::into_raw(function.clone());
     match &**function {
@@ -77,7 +77,7 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
             // visit each child node
             vec.iter().for_each(|child| {
                 // simplify the function then return a raw pointer to it
-                let child_ptr = simplify_hash2(child, hmap);
+                let child_ptr = simplify_hash(child, hmap);
                 // own the child
                 let child_func = unsafe { &*child_ptr };
                 // categorize the sub funciton type
@@ -149,8 +149,8 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
             ))
         }
         Sub { lhs, rhs } => {
-            let lhs_ptr = simplify_hash2(lhs, hmap);
-            let rhs_ptr = simplify_hash2(rhs, hmap);
+            let lhs_ptr = simplify_hash(lhs, hmap);
+            let rhs_ptr = simplify_hash(rhs, hmap);
             let lhs_func = unsafe { &*lhs_ptr };
             let rhs_func = unsafe { &*rhs_ptr };
             fn get_func_type(func: &Function) -> FunctionType {
@@ -539,7 +539,7 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
         Mul { vec } => {
             let mut type_vec = vec![];
             vec.iter().for_each(|child| {
-                let child_ptr = simplify_hash2(child, hmap);
+                let child_ptr = simplify_hash(child, hmap);
                 let child_func = unsafe { &*child_ptr };
                 let child_func_type = match &child_func {
                     Constant(_) => FunctionType::Constant,
@@ -602,8 +602,8 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
             num,
             den
         } => {
-            let num_ptr = simplify_hash2(num, hmap);
-            let den_ptr = simplify_hash2(den, hmap);
+            let num_ptr = simplify_hash(num, hmap);
+            let den_ptr = simplify_hash(den, hmap);
             let num_func = unsafe { &*num_ptr };
             let den_func = unsafe { &*den_ptr };
 
@@ -705,7 +705,7 @@ mod tests {
         let z = Variable("z");
         let a = Variable("a");
 
-        let f = (z.clone() - a.clone()) - (x.clone() - y.clone());
+        let f = x.clone() + y.clone() - (x.clone() + z.clone());
         let f_simple = simplify_h(f.clone());
         println!("Input: {:?}", f);
         println!("Simpl: {:?}", f_simple);
