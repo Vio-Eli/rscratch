@@ -35,7 +35,8 @@ pub fn freeze(function: &Function) -> u64 {
             class
         }
         Function::Sub { lhs: l, rhs: r} |
-        Function::Div { den: l, num: r } => {
+        Function::Div { den: l, num : r } |
+        Function::Pow { base: l, raised: r } => {
             let left_hash = freeze(l.deref());
             let right_hash = freeze(r.deref());
             hasher.write_u64(left_hash);
@@ -60,9 +61,9 @@ pub fn freeze(function: &Function) -> u64 {
 // th optomization could be that you just do the one on the parent node that the new freeze was called on
 // not everynode (when its called recurivly)
 
-pub fn propagate_freeze(function: &Function, freeze_table: HashMap<Arc<Function>, u64>) -> u64 {
-
-}
+// pub fn propagate_freeze(function: &Function, freeze_table: HashMap<Arc<Function>, u64>) -> u64 {
+//
+// }
 
 pub fn freeze_2(function: &Function, hashes: Vec<u64>) -> u64 {
     let mut hasher = DefaultHasher::new();

@@ -24,7 +24,11 @@ pub enum Function<'f> {
     Div {
         num: Arc<Function<'f>>,
         den: Arc<Function<'f>>,
-    }
+    },
+    Pow {
+        base: Arc<Function<'f>>,
+        raised: Arc<Function<'f>>,
+    },
 }
 
 // pub enum Simplify<'f> {
@@ -157,5 +161,30 @@ impl<'f> Ord for Function<'f> {
             ) => lhs.len().cmp(&rhs.len()),
             _ => todo!(),
         }
+    }
+}
+
+pub trait DiscriminantId {
+  fn id(&self) -> u8;
+}
+
+impl<'f> DiscriminantId for Function<'f> {
+    fn id(&self) -> u8 {
+        match self {
+            Function::Variable(_) => 0x00,
+            Function::Constant(_) => 0x01,
+            Function::S{..} => unreachable!("S should not be used in the hash"),
+            Function::Add {..} => 0x02,
+            Function::Sub {..} => 0x03,
+            Function::Mul {..} => 0x04,
+            Function::Div {..} => 0x05,
+            Function::Pow {..} => 0x06,
+        }
+    }
+}
+
+impl<'f, T: Into<f64>> From<T> for Function<'f> {
+    fn from(value: T) -> Self {
+        Function::Constant(value.into())
     }
 }
