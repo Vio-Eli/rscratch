@@ -35,22 +35,27 @@ use std::mem::Discriminant;
 //  ************************************************************/
 //
 
-#[derive(Clone, Debug)]
-pub struct HashValue<'f> { // bad name will change this later
-    pub hash: u64,
+
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+pub struct HashKeys<'f> {
     pub ptr: *const Function<'f>,
+    pub hash: u64
+}
+
+#[derive(Clone, Debug)]
+pub struct HashVals<'f> {
+    pub ptr: *const Function<'f>,
+    pub hash: u64,
     pub mul: f64,
     pub pow: f64,
-    pub mul_ptr: Option<*const Function<'f>>,
-    pub pow_ptr: Option<*const Function<'f>>,
-    pub func_type: Discriminant<Function<'f>>,
-    pub idx: usize,
+    pub children: Vec<(*const Function<'f>, u64)>
 }
 
 // hashmap is:
 // Key: (Parent Function ptr, simplified hash)
 // Val: (simplified hash, vec of child hashes & their types, mul, pow, function type, index in array)
-fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(* const Function<'f>, u64), (*const Function<'f>, u64, f64, f64, Vec<(*const Function<'f>, u64)>)>) -> Vec<(*const Function<'f>, u64, u8, f64, f64)> {
+// fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(* const Function<'f>, u64), (*const Function<'f>, u64, f64, f64, Vec<(*const Function<'f>, u64)>)>) -> Vec<(*const Function<'f>, u64, u8, f64, f64)> {
+fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<HashKeys<'f>, HashVals<'f>>) -> Vec<(*const Function<'f>, u64, u8, f64, f64)> {
 
     let ptr = Arc::as_ptr(function);
 
@@ -66,7 +71,8 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
         Add { vec } => {
             // creating a primary lookup.
             // TODO: axe this with the ptr node method (this ur idea patrick)
-            hmap.insert((ptr, 0), (ptr, 0, 0.0, 0.0, vec![]));
+            // hmap.insert((ptr, 0), (ptr, 0, 0.0, 0.0, vec![]));
+            hmap.insert(HashKeys { ptr, hash: 0 }, HashVals { ptr, hash: 0, mul: 0.0, pow: 0.0, children: vec![] });
 
             vec.iter().for_each(|child| {
                 // simplifying and iterating through grandchildren
@@ -74,22 +80,27 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
                     // hashing the power into the hash for comparison
                     let gc_add_hash = freeze(&Pow{ base: unsafe { Arc::from_raw(*gc_ptr) }, raised: Constant(*gc_pow).into() });
                     // check if in hashmap by hash
-                    if let Some((_, _, mul, _, _)) = hmap.get_mut(&(ptr, gc_add_hash)) {
+                    // if let Some((_, _, mul, _, _)) = hmap.get_mut(&(ptr, gc_add_hash)) {
+                    if let Some(HashVals { mul, .. }) = hmap.get_mut(&HashKeys { ptr, hash: gc_add_hash }) {
                         // if it is, add the mul to the current mul
                         *mul += gc_mul;
                     } else {
                         // else insert it as new
-                        hmap.insert((ptr, gc_add_hash), (*gc_ptr, *gc_hash, *gc_mul, *gc_pow, vec![]));
+                        // hmap.insert((ptr, gc_add_hash), (*gc_ptr, *gc_hash, *gc_mul, *gc_pow, vec![]));
+                        hmap.insert(HashKeys { ptr, hash: gc_add_hash }, HashVals { ptr: *gc_ptr, hash: *gc_hash, mul: *gc_mul, pow: *gc_pow, children: vec![] });
                         // also insert it into the primary lookup
-                        hmap.get_mut(&(ptr, 0)).unwrap().4.push((*gc_ptr, gc_add_hash));
+                        // hmap.get_mut(&(ptr, 0)).unwrap().4.push((*gc_ptr, gc_add_hash));
+                        hmap.get_mut(&HashKeys { ptr, hash: 0 }).unwrap().children.push((*gc_ptr, gc_add_hash));
                     }
                 })
             });
 
             // packaging everything up
-            let add_vec = hmap.get(&(ptr, 0)).unwrap().4.iter().map(|child| {
+            // let add_vec = hmap.get(&(ptr, 0)).unwrap().4.iter().map(|child| {
+            let add_vec = hmap.get(&HashKeys { ptr, hash: 0 }).unwrap().children.iter().map(|child| {
                 // getting the child data
-                let (gc_ptr, _, gc_mul, gc_pow, _) = hmap.get(&(ptr, child.1)).unwrap();
+                // let (gc_ptr, _, gc_mul, gc_pow, _) = hmap.get(&(ptr, child.1)).unwrap();
+                let HashVals { ptr: gc_ptr, mul: gc_mul, pow: gc_pow, .. } = hmap.get(&HashKeys { ptr, hash: child.1 }).unwrap();
 
                 match (gc_mul, gc_pow) {
                     (1.0, 1.0) => {
@@ -126,10 +137,10 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(*
     }
 }
 
-pub fn stringify_hashmap<'f>(hmap: HashMap<(* const Function<'f>, u64), (*const Function<'f>, u64, f64, f64, Vec<(*const Function<'f>, u64)>)>) {
+pub fn stringify_hashmap<'f>(hmap: HashMap<HashKeys, HashVals>) {
     let mut res = String::new();
-    for (key, (ptr, hash, mul, pow, vec)) in hmap {
-        println!("Key: {:?}, Val: {:?}, Hash: {:?}, Mul: {:?}, Pow: {:?} Vec: {:?}", key, unsafe { &(*ptr) }, hash, mul, pow, vec);
+    for (key, HashVals {ptr, hash, mul, pow, children }) in hmap {
+        println!("Key: {:?}, Val: {:?}, Hash: {:?}, Mul: {:?}, Pow: {:?} Vec: {:?}", key, unsafe { &(*ptr) }, hash, mul, pow, children);
     }
 }
 
