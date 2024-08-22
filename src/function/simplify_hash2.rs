@@ -53,13 +53,6 @@ pub struct HashVals<'f> {
     pub children: Vec<(*const Function<'f>, u64)>
 }
 
-#[derive(Clone, Debug, Hash, Eq, PartialEq)]
-pub struct Hash2Vals<'f> {
-    pub ptr: *const Function<'f>,
-    pub mul: *const f64,
-    pub pow: *const f64
-}
-
 #[derive(Debug)]
 pub struct SimplifyReturn<'f> {
     pub ptr: *const Function<'f>,
@@ -90,6 +83,7 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<Ha
             // TODO: axe this with the ptr node method (this ur idea patrick)
             hmap.insert(HashKeys { ptr, hash: 0 }, HashVals { ptr, hash: 0, mul: 0.0, pow: 0.0, mul_ptr: None, pow_ptr: None, children: vec![] });
 
+            // Creating a new Vec that'll become the contents of Add
             let mut add_vec = vec![];
 
             vec.iter().for_each(|child| {
@@ -98,57 +92,52 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<Ha
                     // hashing the power into the hash for comparison
                     let gc_add_hash = freeze(&Pow{ base: unsafe { Arc::from_raw(*gc_ptr) }, raised: Constant(*gc_pow).into() });
                     // check if in hashmap by hash
-                    if let Some(HashVals {ptr: gc_hash_ptr, mul, mul_ptr, .. }) = hmap.get_mut(&HashKeys { ptr, hash: gc_add_hash }) {
+                    if let Some(HashVals {ptr: gc_hmap_ptr, mul, mul_ptr, .. }) = hmap.get_mut(&HashKeys { ptr, hash: gc_add_hash }) {
                         // if it is, add the mul to the current mul
-                        *mul += gc_mul;
+                        *mul += gc_mul; // LEGACY
 
                         if let Some(gc_mul_ptr) = mul_ptr {
-                            unsafe { *(gc_mul_ptr as *mut *const f64 as *mut f64) += gc_mul; } // wot is this cast
+                            // Editing the Mul value in place
+                            // evil triple pointer 
+                            unsafe { *(gc_mul_ptr as *mut *const f64 as *mut f64) += gc_mul; } // wot is this cast - harry potter wizard spell
                         } else {
-                            // edit gc_ptr to add the Mul Block
-                            // let mul_const = Constant(*gc_mul);
-                            // *mul_ptr = match &mul_const { Constant(val) => Some(val as *const f64), _ => None};
+                            // Creating the Mul block and getting the pointer to the val inside
                             let mut mul_const = Constant(*gc_mul);
                             if let Constant(ref mut val) = &mut mul_const {
-                                *mul_ptr = Some(val as *const f64);
+                                *mul_ptr = Some(val as *const f64); // Setting ptr in hmap
                                 *val += 1.0;
                             }
-                            
-                            // println!("GC Ptr: {:?}", gc_hash_ptr);
 
-                            // let gc_old: Function<'f> = unsafe { std::ptr::read(*gc_ptr) };
-                            // let gc_new = Mul { vec: vec![gc_old.into(), mul_const.into()] };
-                            // unsafe { *(*gc_ptr as *mut Function<'f>) = gc_new };
-
-                            unsafe { *(*gc_hash_ptr as *mut Function<'f>) = Mul { vec: vec![std::ptr::read(*gc_hash_ptr).into(), mul_const.into()] } };
+                            // Replacing the current node with the Mul block that contains current node,
+                            //  essentially breaking the tree and reforming it.
+                            // We use std::ptr::read to avoid recursion
+                            // This might be able to be replaced with Weak<T>
+                            unsafe { *(*gc_hmap_ptr as *mut Function<'f>) = Mul { vec: vec![std::ptr::read(*gc_hmap_ptr).into(), mul_const.into()] } };
                         }
                     } else {
-                        // push it to add_vec
+                        // Getting function to push into add_vec and it's ptr
+                        // Arc::from_raw requires ownership so old ptr will not work anymore
                         let gc_new_func = unsafe { Arc::from_raw(*gc_ptr) };
                         let gc_new_ptr = Arc::as_ptr(&gc_new_func);
                         add_vec.push(gc_new_func);
                         
-                        // else insert it as new
-                        // if gc_mul and gc_pow are 1.0, then the ptrs should be None
+                        // If gc_mul and gc_pow are 1.0, then their respective ptrs should be None
                         let (gc_mul_ptr, gc_pow_ptr) = match (gc_mul, gc_pow) {
                             (1.0, 1.0) => (None, None),
                             (_, 1.0) => (Some(gc_mul as *const f64), None),
                             (1.0, _) => (None, Some(gc_pow as *const f64)),
                             (_, _) => (Some(gc_mul as *const f64), Some(gc_pow as *const f64))
                         };
+                        // Inserting values into hashmap for later retrieval and comparison
                         hmap.insert(HashKeys { ptr, hash: gc_add_hash }, HashVals { ptr: gc_new_ptr, hash: *gc_hash, mul: *gc_mul, pow: *gc_pow, mul_ptr: gc_mul_ptr, pow_ptr: gc_pow_ptr, children: vec![] });
-                        // also insert it into the primary lookup
+                        // Also insert it into the primary lookup for record keeping
                         hmap.get_mut(&HashKeys { ptr, hash: 0 }).unwrap().children.push((gc_new_ptr, gc_add_hash));
                     }
-
-                    // stringify_hashmap(hmap.clone());
-                    // println!("Add Vec Ptrs: {:?}", add_vec.iter().map(|f| Arc::as_ptr(f)).collect::<Vec<_>>());
-                    // println!("---------------------------------");
                 })
             });
 
+            // Compiling the Function
             let fnctn = Add { vec: add_vec };
-
             let hash = freeze(&fnctn);
             let new_ptr = Arc::into_raw(Arc::new(fnctn));
 
