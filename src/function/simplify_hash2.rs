@@ -48,89 +48,111 @@ pub struct HashVals<'f> {
     pub hash: u64,
     pub mul: f64,
     pub pow: f64,
+    pub mul_ptr: Option<*const f64>,
+    pub pow_ptr: Option<*const f64>,
     pub children: Vec<(*const Function<'f>, u64)>
+}
+
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+pub struct Hash2Vals<'f> {
+    pub ptr: *const Function<'f>,
+    pub mul: *const f64,
+    pub pow: *const f64
+}
+
+#[derive(Debug)]
+pub struct SimplifyReturn<'f> {
+    pub ptr: *const Function<'f>,
+    pub hash: u64,
+    pub id: u8,
+    pub mul: f64,
+    pub pow: f64
 }
 
 // hashmap is:
 // Key: (Parent Function ptr, simplified hash)
 // Val: (simplified hash, vec of child hashes & their types, mul, pow, function type, index in array)
-// fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<(* const Function<'f>, u64), (*const Function<'f>, u64, f64, f64, Vec<(*const Function<'f>, u64)>)>) -> Vec<(*const Function<'f>, u64, u8, f64, f64)> {
-fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<HashKeys<'f>, HashVals<'f>>) -> Vec<(*const Function<'f>, u64, u8, f64, f64)> {
+fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<HashKeys<'f>, HashVals<'f>>, id: u8) -> Vec<SimplifyReturn<'f>> {
 
     let ptr = Arc::as_ptr(function);
 
     match &**function {
         Variable(_) => {
             let hash = freeze(function);
-            vec![(ptr, hash, function.id(), 1.0, 1.0)]
+            vec![SimplifyReturn { ptr, hash, id: function.id(), mul: 1.0, pow: 1.0 }]
         }
         Constant(val) => {
             let hash = freeze(function);
-            vec![(ptr, hash, function.id(), *val, 1.0)]
+            vec![SimplifyReturn { ptr, hash, id: function.id(), mul: *val, pow: 1.0 }]
         }
         Add { vec } => {
             // creating a primary lookup.
             // TODO: axe this with the ptr node method (this ur idea patrick)
-            // hmap.insert((ptr, 0), (ptr, 0, 0.0, 0.0, vec![]));
-            hmap.insert(HashKeys { ptr, hash: 0 }, HashVals { ptr, hash: 0, mul: 0.0, pow: 0.0, children: vec![] });
+            hmap.insert(HashKeys { ptr, hash: 0 }, HashVals { ptr, hash: 0, mul: 0.0, pow: 0.0, mul_ptr: None, pow_ptr: None, children: vec![] });
+
+            let mut add_vec = vec![];
 
             vec.iter().for_each(|child| {
                 // simplifying and iterating through grandchildren
-                simplify_hash2(child, hmap).iter().for_each(|(gc_ptr, gc_hash, gc_id, gc_mul, gc_pow)| {
+                simplify_hash2(child, hmap, id).iter().for_each(|SimplifyReturn { ptr: gc_ptr, hash: gc_hash, id: gc_id, mul: gc_mul, pow: gc_pow }| {
                     // hashing the power into the hash for comparison
                     let gc_add_hash = freeze(&Pow{ base: unsafe { Arc::from_raw(*gc_ptr) }, raised: Constant(*gc_pow).into() });
                     // check if in hashmap by hash
-                    // if let Some((_, _, mul, _, _)) = hmap.get_mut(&(ptr, gc_add_hash)) {
-                    if let Some(HashVals { mul, .. }) = hmap.get_mut(&HashKeys { ptr, hash: gc_add_hash }) {
+                    if let Some(HashVals {ptr: gc_hash_ptr, mul, mul_ptr, .. }) = hmap.get_mut(&HashKeys { ptr, hash: gc_add_hash }) {
                         // if it is, add the mul to the current mul
                         *mul += gc_mul;
+
+                        if let Some(gc_mul_ptr) = mul_ptr {
+                            unsafe { *(gc_mul_ptr as *mut *const f64 as *mut f64) += gc_mul; } // wot is this cast
+                        } else {
+                            // edit gc_ptr to add the Mul Block
+                            // let mul_const = Constant(*gc_mul);
+                            // *mul_ptr = match &mul_const { Constant(val) => Some(val as *const f64), _ => None};
+                            let mut mul_const = Constant(*gc_mul);
+                            if let Constant(ref mut val) = &mut mul_const {
+                                *mul_ptr = Some(val as *const f64);
+                                *val += 1.0;
+                            }
+                            
+                            // println!("GC Ptr: {:?}", gc_hash_ptr);
+
+                            // let gc_old: Function<'f> = unsafe { std::ptr::read(*gc_ptr) };
+                            // let gc_new = Mul { vec: vec![gc_old.into(), mul_const.into()] };
+                            // unsafe { *(*gc_ptr as *mut Function<'f>) = gc_new };
+
+                            unsafe { *(*gc_hash_ptr as *mut Function<'f>) = Mul { vec: vec![std::ptr::read(*gc_hash_ptr).into(), mul_const.into()] } };
+                        }
                     } else {
+                        // push it to add_vec
+                        let gc_new_func = unsafe { Arc::from_raw(*gc_ptr) };
+                        let gc_new_ptr = Arc::as_ptr(&gc_new_func);
+                        add_vec.push(gc_new_func);
+                        
                         // else insert it as new
-                        // hmap.insert((ptr, gc_add_hash), (*gc_ptr, *gc_hash, *gc_mul, *gc_pow, vec![]));
-                        hmap.insert(HashKeys { ptr, hash: gc_add_hash }, HashVals { ptr: *gc_ptr, hash: *gc_hash, mul: *gc_mul, pow: *gc_pow, children: vec![] });
+                        // if gc_mul and gc_pow are 1.0, then the ptrs should be None
+                        let (gc_mul_ptr, gc_pow_ptr) = match (gc_mul, gc_pow) {
+                            (1.0, 1.0) => (None, None),
+                            (_, 1.0) => (Some(gc_mul as *const f64), None),
+                            (1.0, _) => (None, Some(gc_pow as *const f64)),
+                            (_, _) => (Some(gc_mul as *const f64), Some(gc_pow as *const f64))
+                        };
+                        hmap.insert(HashKeys { ptr, hash: gc_add_hash }, HashVals { ptr: gc_new_ptr, hash: *gc_hash, mul: *gc_mul, pow: *gc_pow, mul_ptr: gc_mul_ptr, pow_ptr: gc_pow_ptr, children: vec![] });
                         // also insert it into the primary lookup
-                        // hmap.get_mut(&(ptr, 0)).unwrap().4.push((*gc_ptr, gc_add_hash));
-                        hmap.get_mut(&HashKeys { ptr, hash: 0 }).unwrap().children.push((*gc_ptr, gc_add_hash));
+                        hmap.get_mut(&HashKeys { ptr, hash: 0 }).unwrap().children.push((gc_new_ptr, gc_add_hash));
                     }
+
+                    // stringify_hashmap(hmap.clone());
+                    // println!("Add Vec Ptrs: {:?}", add_vec.iter().map(|f| Arc::as_ptr(f)).collect::<Vec<_>>());
+                    // println!("---------------------------------");
                 })
             });
-
-            // packaging everything up
-            // let add_vec = hmap.get(&(ptr, 0)).unwrap().4.iter().map(|child| {
-            let add_vec = hmap.get(&HashKeys { ptr, hash: 0 }).unwrap().children.iter().map(|child| {
-                // getting the child data
-                // let (gc_ptr, _, gc_mul, gc_pow, _) = hmap.get(&(ptr, child.1)).unwrap();
-                let HashVals { ptr: gc_ptr, mul: gc_mul, pow: gc_pow, .. } = hmap.get(&HashKeys { ptr, hash: child.1 }).unwrap();
-
-                match (gc_mul, gc_pow) {
-                    (1.0, 1.0) => {
-                        unsafe { Arc::from_raw(*gc_ptr) }
-                    }
-                    (_, 0.0) => {
-                        Arc::new(Constant(1.0))
-                    }
-                    (0.0, _) => {
-                        Constant(0.0).into()
-                    }
-                    (mul, pow) => {
-                        if mul == &1.0 {
-                            Pow { base: unsafe { Arc::from_raw(*gc_ptr) }, raised: Constant(*pow).into() }.into()
-                        } else if pow == &1.0 {
-                            Mul { vec: vec![Constant(*mul).into(), unsafe { Arc::from_raw(*gc_ptr) }] }.into()
-                        } else {
-                           Mul { vec: vec![Constant(*mul).into(), Pow { base: unsafe { Arc::from_raw(*gc_ptr) }, raised: Constant(*pow).into() }.into()] }.into()
-                        }
-                    }
-                }
-
-            }).collect();
 
             let fnctn = Add { vec: add_vec };
 
             let hash = freeze(&fnctn);
             let new_ptr = Arc::into_raw(Arc::new(fnctn));
 
-            vec![(new_ptr, hash, function.id(), 1.0, 1.0)]
+            vec![SimplifyReturn { ptr: new_ptr, hash, id: function.id(), mul: 1.0, pow: 1.0 }]
             // vec![(ptr, 0, 0, 1.0, 1.0)]
         }
         _ => todo!()
@@ -139,10 +161,29 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<Ha
 
 pub fn stringify_hashmap<'f>(hmap: HashMap<HashKeys, HashVals>) {
     let mut res = String::new();
-    for (key, HashVals {ptr, hash, mul, pow, children }) in hmap {
-        println!("Key: {:?}, Val: {:?}, Hash: {:?}, Mul: {:?}, Pow: {:?} Vec: {:?}", key, unsafe { &(*ptr) }, hash, mul, pow, children);
+    for (key, HashVals {ptr, hash, mul, pow, mul_ptr, pow_ptr, children }) in hmap {
+        println!("Key: {:?}, Val: {:?}, Val Ptr: {:?}, Hash: {:?}, Mul: {:?}, Pow: {:?}, Mul Ptr: {:?}, Pow Ptr: {:?}, Vec: {:?}, Vec Expds: {:?}", key, unsafe { &(*ptr) }, ptr, hash, mul, pow, mul_ptr, pow_ptr, children, children.iter().map(|(ptr, hash)| unsafe { &(**ptr) }).collect::<Vec<_>>());
     }
 }
+
+// TODO: plan for version 3 or 4
+// instead of doing the splicing immediately return a function that will execute the splice as a vec
+// the signature might look like something as follows
+// fn(.. /*options tbd*/) -> Vec<fn(/*location*/ *const Function) -> Option<()> /*success/failure*/>
+// the function would be a factory that returns a function that that can be executed to preform the slice
+// returning the factory is better than returning the constructed function because less memory would be allocated
+// it would be very efficient because it would be very efficient because a fn(..) is just a pointer to a location in asm
+// when the recursive part of the algo is done (currently the entire algo is recursive)
+// we would determine if any factories can be "canceled out" then we will execute the generated funcs
+// there should be an option to either provide an async runtime like tokio if the user is using one
+// or provide a thread-pool to possibly execute on
+// the thread-pool option would just be us spawning threads manually
+
+
+
+// fn a() -> Vec<fn(/*location*/ *const Function) -> Option<()> /*success/failure*/> {
+//     // let v: Vec<dyn FnOnce> = vec![];
+// } // sry i commented this so i can test stuff
 
 
 #[cfg(test)]
@@ -155,10 +196,12 @@ mod tests {
         let x = Variable("x");
         let y = Variable("y");
         let z = x.clone() + x.clone();
+        let z_id = z.id();
 
         let mut hmap = HashMap::new();
-        let res = simplify_hash2(&z.into(), &mut hmap);
+        let res = simplify_hash2(&z.into(), &mut hmap, z_id);
         println!("{:?}", res);
+        println!("{:?}", unsafe { &(*res[0].ptr) });
         stringify_hashmap(hmap);
     }
 }
