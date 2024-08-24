@@ -45,6 +45,7 @@ pub struct HashKeys<'f> {
 #[derive(Clone, Debug)]
 pub struct HashVals<'f> {
     pub ptr: *const Function<'f>,
+    pub idx: usize,
     pub hash: u64,
     pub mul: f64,
     pub pow: f64,
@@ -81,7 +82,7 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<Ha
         Add { vec } => {
             // creating a primary lookup.
             // TODO: axe this with the ptr node method (this ur idea patrick)
-            hmap.insert(HashKeys { ptr, hash: 0 }, HashVals { ptr, hash: 0, mul: 0.0, pow: 0.0, mul_ptr: None, pow_ptr: None, children: vec![] });
+            hmap.insert(HashKeys { ptr, hash: 0 }, HashVals { ptr, idx: 0, hash: 0, mul: 0.0, pow: 0.0, mul_ptr: None, pow_ptr: None, children: vec![] });
 
             // Creating a new Vec that'll become the contents of Add
             let mut add_vec = vec![];
@@ -92,7 +93,7 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<Ha
                     // hashing the power into the hash for comparison
                     let gc_add_hash = freeze(&Pow{ base: unsafe { Arc::from_raw(*gc_ptr) }, raised: Constant(*gc_pow).into() });
                     // check if in hashmap by hash
-                    if let Some(HashVals {ptr: gc_hmap_ptr, mul, mul_ptr, .. }) = hmap.get_mut(&HashKeys { ptr, hash: gc_add_hash }) {
+                    if let Some(HashVals {ptr: gc_hmap_ptr, idx: gc_hmap_idx, mul, mul_ptr, .. }) = hmap.get_mut(&HashKeys { ptr, hash: gc_add_hash }) {
                         // if it is, add the mul to the current mul
                         *mul += gc_mul; // LEGACY
 
@@ -112,7 +113,13 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<Ha
                             //  essentially breaking the tree and reforming it.
                             // We use std::ptr::read to avoid recursion
                             // This might be able to be replaced with Weak<T>
-                            unsafe { *(*gc_hmap_ptr as *mut Function<'f>) = Mul { vec: vec![std::ptr::read(*gc_hmap_ptr).into(), mul_const.into()] } };
+                            // unsafe { *(*gc_hmap_ptr as *mut Function<'f>) = Mul { vec: vec![std::ptr::read(*gc_hmap_ptr).into(), mul_const.into()] } };
+                            let new_gc = Arc::new(Mul { vec: vec![unsafe { Arc::from_raw(*gc_hmap_ptr) }, Arc::new(mul_const)] });
+                            
+                            // Inserting the new Mul block into the add_vec
+                            add_vec[*gc_hmap_idx] = unsafe { new_gc.clone() };
+                            *gc_hmap_ptr = Arc::as_ptr(&new_gc);
+                            
                         }
                     } else {
                         // Getting function to push into add_vec and it's ptr
@@ -129,7 +136,7 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<Ha
                             (_, _) => (Some(gc_mul as *const f64), Some(gc_pow as *const f64))
                         };
                         // Inserting values into hashmap for later retrieval and comparison
-                        hmap.insert(HashKeys { ptr, hash: gc_add_hash }, HashVals { ptr: gc_new_ptr, hash: *gc_hash, mul: *gc_mul, pow: *gc_pow, mul_ptr: gc_mul_ptr, pow_ptr: gc_pow_ptr, children: vec![] });
+                        hmap.insert(HashKeys { ptr, hash: gc_add_hash }, HashVals { ptr: gc_new_ptr, idx: add_vec.len() - 1, hash: *gc_hash, mul: *gc_mul, pow: *gc_pow, mul_ptr: gc_mul_ptr, pow_ptr: gc_pow_ptr, children: vec![] });
                         // Also insert it into the primary lookup for record keeping
                         hmap.get_mut(&HashKeys { ptr, hash: 0 }).unwrap().children.push((gc_new_ptr, gc_add_hash));
                     }
@@ -150,8 +157,8 @@ fn simplify_hash2<'f, 'm>(function: &Arc<Function<'f>>, hmap: &'m mut HashMap<Ha
 
 pub fn stringify_hashmap<'f>(hmap: HashMap<HashKeys, HashVals>) {
     let mut res = String::new();
-    for (key, HashVals {ptr, hash, mul, pow, mul_ptr, pow_ptr, children }) in hmap {
-        println!("Key: {:?}, Val: {:?}, Val Ptr: {:?}, Hash: {:?}, Mul: {:?}, Pow: {:?}, Mul Ptr: {:?}, Pow Ptr: {:?}, Vec: {:?}, Vec Expds: {:?}", key, unsafe { &(*ptr) }, ptr, hash, mul, pow, mul_ptr, pow_ptr, children, children.iter().map(|(ptr, hash)| unsafe { &(**ptr) }).collect::<Vec<_>>());
+    for (key, HashVals {ptr, idx, hash, mul, pow, mul_ptr, pow_ptr, children }) in hmap {
+        println!("Key: {:?}, Val: {:?}, Val Ptr: {:?}, Idx: {:?}, Hash: {:?}, Mul: {:?}, Pow: {:?}, Mul Ptr: {:?}, Pow Ptr: {:?}, Vec: {:?}, Vec Expds: {:?}", key, unsafe { &(*ptr) }, ptr, idx, hash, mul, pow, mul_ptr, pow_ptr, children, children.iter().map(|(ptr, hash)| unsafe { &(**ptr) }).collect::<Vec<_>>());
     }
 }
 
