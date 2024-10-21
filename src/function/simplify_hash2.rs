@@ -1,13 +1,13 @@
 use std::collections::HashMap;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::ops::{Deref, Neg};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use rust_decimal::Decimal;
 use crate::function::function::{DiscriminantId, Function};
 use crate::function::function::Function::{Add, Sub, Constant, Mul, Div, S, Variable, Pow};
 use crate::function::freeze::freeze;
 use std::mem::Discriminant;
-
+use std::rc::{Rc, Weak};
 //
 // /************************************************************
 //  ** PSEUDOCODE **
